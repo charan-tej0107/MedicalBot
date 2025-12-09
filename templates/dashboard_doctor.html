@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Doctor/Admin Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body {
+      background: radial-gradient(circle at top left, #e0f2fe 0, #eef2ff 30%, #f9fafb 70%);
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      color: #111827;
+    }
+    .app-shell {
+      display: flex;
+      width: 100%;
+      max-width: 1150px;
+      min-height: 100vh;
+      background: #ffffffee;
+      border-radius: 18px;
+      box-shadow: 0 18px 45px rgba(15, 23, 42, 0.12);
+      border: 1px solid #cbd5e1;
+      overflow: hidden;
+      backdrop-filter: blur(10px);
+    }
+    .sidebar {
+      width: 240px;
+      background: linear-gradient(180deg, #1d4ed8, #4f46e5);
+      color: #f9fafb;
+      display: flex;
+      flex-direction: column;
+      padding: 18px;
+    }
+    .sb-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .avatar {
+      width: 44px;
+      height: 44px;
+      border-radius: 999px;
+      background: #ffffff33;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      border: 1px solid #bfdbfe99;
+    }
+    .sb-title { font-size: 16px; font-weight: 700; }
+    .sb-sub { font-size: 12px; opacity: 0.9; }
+    .sb-section-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      margin-top: 18px;
+      margin-bottom: 8px;
+      letter-spacing: 0.08em;
+      opacity: 0.9;
+    }
+    .sb-nav button {
+      width: 100%;
+      text-align: left;
+      border: none;
+      background: transparent;
+      color: #eef2ff;
+      padding: 8px 10px;
+      border-radius: 10px;
+      font-size: 13px;
+      cursor: pointer;
+      margin-bottom: 6px;
+    }
+    .sb-nav button.active,
+    .sb-nav button:hover {
+      background: #ffffff33;
+    }
+    .logout-btn {
+      margin-top: auto;
+      padding: 8px 12px;
+      background: #ffffff33;
+      border-radius: 999px;
+      font-size: 12px;
+      color: #f9fafb;
+      text-decoration: none;
+      text-align: center;
+    }
+
+    .main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: white;
+    }
+    .main-header {
+      padding: 18px 20px;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    .main-title {
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .main-sub {
+      font-size: 12px;
+      color: #475569;
+      margin-top: 2px;
+    }
+    .main-body {
+      padding: 16px 18px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .panel {
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid #e5e7eb;
+      background: #ffffff;
+    }
+    .panel.active {
+      display: flex;
+    }
+    .panel-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+    .panel-sub {
+      font-size: 12px;
+      color: #6b7280;
+      margin-bottom: 8px;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 8px;
+      align-items: center;
+    }
+    .pill-btn {
+      padding: 6px 12px;
+      border-radius: 999px;
+      border: none;
+      background: #dbeafe;
+      color: #1d4ed8;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .pill-btn:hover {
+      background: #bfdbfe;
+    }
+    .input-small {
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid #cbd5e1;
+      font-size: 12px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      padding: 7px 8px;
+      border: 1px solid #e5e7eb;
+      text-align: left;
+    }
+    th {
+      background: #f1f5f9;
+      font-weight: 600;
+      font-size: 12px;
+      color: #475569;
+    }
+    tbody tr:nth-child(even) {
+      background: #f9fafb;
+    }
+    tbody tr:hover {
+      background: #e5f0ff;
+    }
+    .tag {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 999px;
+      font-size: 10px;
+      background: #e0f2fe;
+      color: #0369a1;
+    }
+  </style>
+</head>
+<body data-role="{{ role }}" data-username="{{ username }}">
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sb-header">
+        <div class="avatar">🩺</div>
+        <div>
+          <div class="sb-title">{{ username }}</div>
+          <div class="sb-sub">{{ role|capitalize }} view</div>
+        </div>
+      </div>
+      <div class="sb-section-title">Navigation</div>
+      <div class="sb-nav">
+        <button class="active" data-panel="appointments" onclick="showPanel('appointments', this)">My Appointments</button>
+        <button data-panel="doctors" onclick="showPanel('doctors', this)">Doctors</button>
+        <button data-panel="schedule" onclick="showPanel('schedule', this)">Schedule</button>
+      </div>
+      <a class="logout-btn" href="{{ url_for('logout') }}">Logout</a>
+    </aside>
+
+    <main class="main">
+      <header class="main-header">
+        <div class="main-title">Clinic Dashboard</div>
+        <div class="main-sub">
+          View your appointments, doctors list, and weekly schedule (with day names).
+        </div>
+      </header>
+
+      <section class="main-body">
+
+        <!-- APPOINTMENTS PANEL -->
+        <section id="panel-appointments" class="panel active">
+          <div>
+            <div class="panel-title">My Appointments</div>
+            <div class="panel-sub">
+              All appointments associated with your account.
+            </div>
+          </div>
+          <div class="toolbar">
+            <button class="pill-btn" onclick="loadAppointments()">Refresh</button>
+          </div>
+          <div style="overflow-x:auto;">
+            <table id="appointmentsTable">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Patient</th>
+                  <th>Age</th>
+                  <th>Gender</th>
+                  <th>Email</th>
+                  <th>Phone</th>
+                  <th>Doctor</th>
+                  <th>Speciality</th>
+                  <th>Date</th>
+                  <th>Time</th>
+                  <th>Reason</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- DOCTORS PANEL -->
+        <section id="panel-doctors" class="panel">
+          <div>
+            <div class="panel-title">Doctors</div>
+            <div class="panel-sub">
+              List of all doctors registered in the clinic.
+            </div>
+          </div>
+          <div class="toolbar">
+            <button class="pill-btn" onclick="loadDoctors()">Refresh</button>
+          </div>
+          <div style="overflow-x:auto;">
+            <table id="doctorsTable">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Name</th>
+                  <th>Speciality</th>
+                  <th>Hospital</th>
+                  <th>Email</th>
+                  <th>Phone</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- SCHEDULE PANEL -->
+        <section id="panel-schedule" class="panel">
+          <div>
+            <div class="panel-title">Doctor Schedule</div>
+            <div class="panel-sub">
+              Weekly repeating schedule with one off-day per doctor. Day names are shown.
+            </div>
+          </div>
+          <div class="toolbar">
+            <input id="scheduleDate" class="input-small" type="date" />
+            <button class="pill-btn" onclick="setToday()">Today</button>
+            <button class="pill-btn" onclick="loadSchedule()">Load schedule</button>
+            <button class="pill-btn" onclick="regenerateSchedule()">Regenerate (admin/doctor)</button>
+          </div>
+          <div style="overflow-x:auto;">
+            <table id="scheduleTable">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Day</th>
+                  <th>Time</th>
+                  <th>Doctor ID</th>
+                  <th>Doctor</th>
+                  <th>Speciality</th>
+                  <th>Hospital</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+
+      </section>
+    </main>
+  </div>
+
+  <script>
+    function showPanel(id, btn) {
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      document.getElementById('panel-' + id).classList.add('active');
+
+      document.querySelectorAll('.sb-nav button').forEach(b => b.classList.remove('active'));
+      if (btn) btn.classList.add('active');
+
+      if (id === 'appointments') loadAppointments();
+      if (id === 'doctors') loadDoctors();
+      if (id === 'schedule') {
+        if (!document.getElementById('scheduleDate').value) setToday();
+        loadSchedule();
+      }
+    }
+
+    function setToday() {
+      const today = new Date().toISOString().slice(0, 10);
+      document.getElementById('scheduleDate').value = today;
+    }
+
+    async function loadAppointments() {
+      try {
+        const res = await fetch('/api/appointments');
+        const data = await res.json();
+        const body = document.querySelector('#appointmentsTable tbody');
+        body.innerHTML = '';
+        (data.appointments || []).forEach(a => {
+          body.innerHTML += `
+            <tr>
+              <td>${a.id}</td>
+              <td>${a.patient_name || ''}</td>
+              <td>${a.patient_age || ''}</td>
+              <td>${a.patient_gender || ''}</td>
+              <td>${a.patient_email || ''}</td>
+              <td>${a.patient_phone || ''}</td>
+              <td>${a.doctor_name || ''}</td>
+              <td>${a.doctor_specialty || ''}</td>
+              <td>${a.date || ''}</td>
+              <td>${a.time || ''}</td>
+              <td>${a.reason || ''}</td>
+            </tr>`;
+        });
+      } catch (e) {
+        console.error(e);
+        alert('Failed to load appointments.');
+      }
+    }
+
+    async function loadDoctors() {
+      try {
+        const res = await fetch('/api/doctors');
+        const data = await res.json();
+        const body = document.querySelector('#doctorsTable tbody');
+        body.innerHTML = '';
+        (data.doctors || []).forEach(d => {
+          body.innerHTML += `
+            <tr>
+              <td>${d.id}</td>
+              <td>${d.name || ''}</td>
+              <td>${d.specialty || ''}</td>
+              <td>${d.hospital || ''}</td>
+              <td>${d.email || ''}</td>
+              <td>${d.phone || ''}</td>
+            </tr>`;
+        });
+      } catch (e) {
+        console.error(e);
+        alert('Failed to load doctors.');
+      }
+    }
+
+    async function loadSchedule() {
+      const date = document.getElementById('scheduleDate').value.trim();
+      let url = '/api/schedule';
+      if (date) url += '?date=' + encodeURIComponent(date);
+
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+        const body = document.querySelector('#scheduleTable tbody');
+        body.innerHTML = '';
+        (data.schedule || []).forEach(s => {
+          body.innerHTML += `
+            <tr>
+              <td>${s.date}</td>
+              <td>${s.day}</td>
+              <td>${s.time}</td>
+              <td>${s.doctor_id}</td>
+              <td>${s.doctor_name}</td>
+              <td>${s.specialty}</td>
+              <td>${s.hospital || ''}</td>
+            </tr>`;
+        });
+      } catch (e) {
+        console.error(e);
+        alert('Failed to load schedule.');
+      }
+    }
+
+    async function regenerateSchedule() {
+      const role = document.body.dataset.role;
+      if (role !== 'doctor' && role !== 'admin') {
+        alert('Only doctor or admin can regenerate schedule.');
+        return;
+      }
+      if (!confirm('Regenerate 60-day weekly schedule with new random off-days?')) return;
+      try {
+        const res = await fetch('/api/auto_schedule', { method: 'POST' });
+        const data = await res.json();
+        alert(data.message || 'Schedule regenerated.');
+        loadSchedule();
+      } catch (e) {
+        console.error(e);
+        alert('Failed to regenerate schedule.');
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      setToday();
+      loadAppointments();
+    });
+  </script>
+</body>
+</html>

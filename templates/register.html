@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Register</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: radial-gradient(circle at top left, #e0f2fe 0, #eef2ff 30%, #f9fafb 70%);
+    }
+    .card {
+      width: 380px;
+      max-width: 95%;
+      background: #ffffff;
+      border-radius: 16px;
+      box-shadow: 0 15px 40px rgba(15, 23, 42, 0.18);
+      padding: 20px 22px;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+    }
+    h1 {
+      font-size: 20px;
+      margin: 0 0 4px;
+      text-align: center;
+    }
+    .sub {
+      font-size: 12px;
+      text-align: center;
+      color: #6b7280;
+      margin-bottom: 14px;
+    }
+    .field { margin-bottom: 10px; }
+    label {
+      display: block;
+      font-size: 12px;
+      margin-bottom: 4px;
+      color: #374151;
+    }
+    input, select {
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid #d1d5db;
+      font-size: 13px;
+    }
+    input:focus, select:focus {
+      border-color: #2563eb;
+      box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.25);
+      outline: none;
+    }
+    .btn {
+      width: 100%;
+      padding: 9px 12px;
+      border-radius: 999px;
+      border: none;
+      background: linear-gradient(135deg, #2563eb, #4f46e5);
+      color: #eff6ff;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 8px;
+    }
+    .btn:hover { filter: brightness(1.05); }
+    .error {
+      font-size: 12px;
+      color: #b91c1c;
+      background: #fee2e2;
+      border-radius: 10px;
+      padding: 6px 8px;
+      margin-bottom: 8px;
+    }
+    .link {
+      margin-top: 10px;
+      font-size: 12px;
+      text-align: center;
+    }
+    .link a {
+      color: #2563eb;
+      text-decoration: none;
+      font-weight: 500;
+    }
+    .section-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      color: #6b7280;
+      margin-top: 6px;
+      margin-bottom: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Create Account</h1>
+    <div class="sub">Register as a patient or doctor.</div>
+
+    {% if error %}
+      <div class="error">{{ error }}</div>
+    {% endif %}
+
+    <form method="post">
+      <div class="field">
+        <label>Account type</label>
+        <select name="role" id="roleSelect">
+          <option value="patient">Patient</option>
+          <option value="doctor">Doctor</option>
+        </select>
+      </div>
+
+      <div class="section-label">Login details</div>
+
+      <div class="field">
+        <label>Username *</label>
+        <input type="text" name="username" required />
+      </div>
+
+      <div class="field">
+        <label>Password *</label>
+        <input type="password" name="password" required />
+      </div>
+
+      <div class="field">
+        <label>Email</label>
+        <input type="email" name="email" placeholder="you@example.com" />
+      </div>
+
+      <div class="field">
+        <label>Mobile number</label>
+        <input type="text" name="phone" placeholder="10-digit mobile" />
+      </div>
+
+      <div class="field">
+        <label>Age</label>
+        <input type="number" name="age" min="0" max="120" />
+      </div>
+
+      <div class="field">
+        <label>Gender</label>
+        <select name="gender">
+          <option value="">Select</option>
+          <option value="Male">Male</option>
+          <option value="Female">Female</option>
+          <option value="Other">Other</option>
+        </select>
+      </div>
+
+      <!-- Doctor-only fields -->
+      <div id="doctorFields" style="display:none;">
+        <div class="section-label">Doctor details (only if registering as doctor)</div>
+
+        <div class="field">
+          <label>Doctor name</label>
+          <input type="text" name="doctor_name" placeholder="Dr. Full Name" />
+        </div>
+
+        <div class="field">
+          <label>Speciality</label>
+          <input type="text" name="specialty" placeholder="Cardiology, Orthopedics, etc." />
+        </div>
+
+        <div class="field">
+          <label>Hospital / Clinic</label>
+          <input type="text" name="hospital" placeholder="Hospital / Clinic name" />
+        </div>
+
+        <div class="field">
+          <label>
+            <input type="checkbox" name="night_shift" value="1" />
+            Night shift available (7:00 PM – 10:00 PM)
+          </label>
+        </div>
+      </div>
+
+      <button class="btn" type="submit">Register</button>
+    </form>
+
+    <div class="link">
+      Already have an account? <a href="{{ url_for('login') }}">Log in</a>
+    </div>
+  </div>
+
+  <script>
+    const roleSelect = document.getElementById("roleSelect");
+    const doctorFields = document.getElementById("doctorFields");
+
+    function toggleDoctorFields() {
+      if (roleSelect.value === "doctor") {
+        doctorFields.style.display = "block";
+      } else {
+        doctorFields.style.display = "none";
+      }
+    }
+
+    roleSelect.addEventListener("change", toggleDoctorFields);
+    toggleDoctorFields();
+  </script>
+</body>
+</html>

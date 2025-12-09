@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Clinic Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+      background: radial-gradient(circle at top left, #e0f2fe 0, #eef2ff 30%, #f9fafb 70%);
+      min-height: 100vh;
+      color: #111827;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      overflow-y: auto;
+    }
+    .app-shell {
+      display: flex;
+      width: 100%;
+      max-width: 1150px;
+      min-height: 100vh;
+      background: #ffffffee;
+      border-radius: 18px;
+      box-shadow: 0 18px 45px rgba(15, 23, 42, 0.12);
+      border: 1px solid #cbd5e1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      backdrop-filter: blur(10px);
+    }
+    .sidebar {
+      width: 240px;
+      background: linear-gradient(180deg, #1d4ed8, #4f46e5);
+      color: #f9fafb;
+      display: flex;
+      flex-direction: column;
+      padding: 18px;
+    }
+    .sb-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .avatar {
+      width: 44px; height: 44px;
+      border-radius: 999px;
+      background: #ffffff33;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px;
+      border: 1px solid #bfdbfe99;
+    }
+    .sb-title { font-size: 16px; font-weight: 700; }
+    .sb-sub { font-size: 12px; opacity: 0.9; }
+    .sb-section-title {
+      font-size: 11px; text-transform: uppercase;
+      margin-top: 18px; margin-bottom: 8px;
+    }
+    .sb-nav button {
+      width: 100%;
+      text-align: left;
+      border: none;
+      background: transparent;
+      color: #eef2ff;
+      padding: 8px 10px;
+      border-radius: 10px;
+      font-size: 13px;
+      cursor: pointer;
+      margin-bottom: 5px;
+    }
+    .sb-nav button.active,
+    .sb-nav button:hover { background: #ffffff33; }
+    .logout-btn {
+      margin-top: auto;
+      padding: 8px 12px;
+      background: #ffffff33;
+      border-radius: 999px;
+      font-size: 12px;
+      color: white;
+      text-decoration: none;
+      text-align: center;
+    }
+
+    .main { flex: 1; display: flex; flex-direction: column; background: white; }
+    .main-header {
+      padding: 18px;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    .main-title { font-size: 20px; font-weight: 700; }
+    .main-sub { font-size: 12px; color: #475569; }
+    .main-body {
+      flex: 1;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .panel {
+      display: none;
+      flex-direction: column;
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid #e5e7eb;
+      background: white;
+    }
+    .panel.active { display: flex; }
+    .panel-title { font-size: 18px; margin-bottom: 5px; font-weight: 600; }
+
+    .chat-container {
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      background: #f9fafb;
+      display: flex;
+      flex-direction: column;
+      height: 500px;
+      overflow: hidden;
+    }
+    .chat-messages {
+      flex: 1;
+      padding: 12px;
+      overflow-y: auto;
+      background: linear-gradient(to bottom, #f1f5f9, #ffffff);
+    }
+    .message {
+      margin: 6px 0;
+      padding: 10px 12px;
+      border-radius: 12px;
+      font-size: 13px;
+      max-width: 80%;
+      white-space: pre-line;
+    }
+    .message.user {
+      margin-left: auto;
+      background: #dbeafe;
+      border-bottom-right-radius: 4px;
+    }
+    .message.bot {
+      margin-right: auto;
+      background: #e5e7eb;
+      border-bottom-left-radius: 4px;
+    }
+    .quick-actions {
+      padding: 10px;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      border-top: 1px solid #e5e7eb;
+      background: #f3f4f6;
+    }
+    .pill-btn {
+      padding: 6px 12px;
+      font-size: 12px;
+      border-radius: 999px;
+      border: none;
+      background: #dbeafe;
+      cursor: pointer;
+      color: #1d4ed8;
+    }
+    .chat-input-area {
+      padding: 10px;
+      display: flex;
+      gap: 8px;
+      border-top: 1px solid #e5e7eb;
+      background: white;
+    }
+    .chat-input-area input {
+      flex: 1;
+      padding: 10px 12px;
+      border-radius: 999px;
+      border: 1px solid #9ca3af;
+    }
+    .send-btn {
+      padding: 8px 14px;
+      border-radius: 999px;
+      background: #2563eb;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+
+    table {
+      width: 100%; border-collapse: collapse; font-size: 13px;
+    }
+    th, td {
+      border: 1px solid #e5e7eb;
+      padding: 8px;
+    }
+    th { background: #f1f5f9; }
+  </style>
+</head>
+
+<body data-username="{{ username }}" data-role="{{ role }}">
+  <div class="app-shell">
+    <div class="sidebar">
+      <div class="sb-header">
+        <div class="avatar">🩺</div>
+        <div>
+          <div class="sb-title">{{ username }}</div>
+          <div class="sb-sub">{{ role|capitalize }}</div>
+        </div>
+      </div>
+      <div class="sb-section-title">Menu</div>
+      <div class="sb-nav">
+        <button class="active" onclick="showPanel('chatbot')">Chatbot</button>
+        <button onclick="showPanel('appointments')">Appointments</button>
+        <button onclick="showPanel('doctors')">Doctors</button>
+      </div>
+      <a class="logout-btn" href="/logout">Logout</a>
+    </div>
+
+    <div class="main">
+      <div class="main-header">
+        <div class="main-title">Clinic Dashboard</div>
+        <div class="main-sub">Manage appointments & general health information</div>
+      </div>
+
+      <div class="main-body">
+
+        <!-- Chatbot -->
+        <div id="chatbot" class="panel active">
+          <div class="panel-title">Appointment & Symptom Chatbot</div>
+          <div class="chat-container">
+            <div id="chatMessages" class="chat-messages"></div>
+            <div class="quick-actions">
+              <button class="pill-btn" onclick="sendShortcut('book')">Book</button>
+              <button class="pill-btn" onclick="sendShortcut('view')">View</button>
+              <button class="pill-btn" onclick="sendShortcut('cancel')">Cancel</button>
+              <button class="pill-btn" onclick="sendShortcut('symptom')">Symptom</button>
+            </div>
+            <div class="chat-input-area">
+              <input id="chatInput" type="text" placeholder="Type your message..." />
+              <button class="send-btn" onclick="sendMessage()">Send</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Appointments -->
+        <div id="appointments" class="panel">
+          <div class="panel-title">Your Appointments</div>
+          <table id="appointmentsTable">
+            <thead>
+              <tr>
+                <th>ID</th><th>Patient</th><th>Age</th><th>Gender</th><th>Email</th>
+                <th>Phone</th><th>Doctor</th><th>Speciality</th><th>Date</th><th>Time</th><th>Reason</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <!-- Doctors -->
+        <div id="doctors" class="panel">
+          <div class="panel-title">Doctors List</div>
+          <table id="doctorsTable">
+            <thead>
+              <tr>
+                <th>ID</th><th>Name</th><th>Speciality</th><th>Hospital</th><th>Email</th><th>Phone</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ---------- small helpers for validation ----------
+
+    function isValidPhone(phone) {
+      // exactly 10 digits, nothing else
+      return /^\d{10}$/.test(phone);
+    }
+
+    function isValidDateYYYYMMDD(str) {
+      // format check
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+      if (!m) return false;
+      const year = parseInt(m[1], 10);
+      const month = parseInt(m[2], 10);
+      const day = parseInt(m[3], 10);
+      // basic range
+      if (month < 1 || month > 12) return false;
+      if (day < 1 || day > 31) return false;
+      const d = new Date(year, month - 1, day);
+      // check real calendar date
+      return d.getFullYear() === year &&
+             d.getMonth() === (month - 1) &&
+             d.getDate() === day;
+    }
+
+    // ---------- UI logic ----------
+
+    function showPanel(id) {
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      document.getElementById(id).classList.add('active');
+      document.querySelectorAll('.sb-nav button').forEach(b => b.classList.remove('active'));
+      const btn = [...document.querySelectorAll('.sb-nav button')]
+        .find(b => b.innerText.toLowerCase().includes(id));
+      if (btn) btn.classList.add('active');
+
+      if (id === 'appointments') loadAppointments();
+      if (id === 'doctors') loadDoctors();
+    }
+
+    function addMessage(text, sender) {
+      const box = document.getElementById('chatMessages');
+      const msg = document.createElement('div');
+      msg.className = 'message ' + sender;
+      msg.textContent = text;
+      box.appendChild(msg);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function sendShortcut(cmd) {
+      document.getElementById("chatInput").value = cmd;
+      sendMessage();
+    }
+
+    async function cancelAppointmentFlow() {
+      const idStr = prompt("Enter appointment ID to cancel:");
+      if (!idStr) { addMessage("Cancelled.", "bot"); return; }
+      const id = parseInt(idStr, 10);
+      if (isNaN(id)) { alert("Invalid ID."); return cancelAppointmentFlow(); }
+      try {
+        const res = await fetch(`/api/appointments/${id}`, { method: "DELETE" });
+        const data = await res.json();
+        addMessage(data.message, "bot");
+        loadAppointments();
+      } catch (e) {
+        addMessage("Error contacting server.", "bot");
+      }
+    }
+
+    async function sendMessage() {
+      const input = document.getElementById("chatInput");
+      const text = input.value.trim();
+      if (!text) return;
+      addMessage(text, "user");
+      input.value = "";
+
+      // Symptom education
+      if (text.startsWith("symptom")) {
+        const s = prompt("Describe your symptom:");
+        if (!s) return;
+        addMessage("Symptom: " + s, "user");
+        const res = await fetch("/api/symptom_education", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ symptom: s })
+        });
+        const data = await res.json();
+        addMessage(data.message, "bot");
+        return;
+      }
+
+      // Booking flow – patient selects doctor, system selects earliest time for that doctor
+      if (text === "book") {
+        try {
+          // 1) Basic patient info
+          let name = "";
+          while (!name) {
+            name = prompt("Patient name:");
+            if (!name) alert("Name is required.");
+          }
+
+          let age = "";
+          while (!age || isNaN(age)) {
+            age = prompt("Patient age (number):");
+            if (!age || isNaN(age)) alert("Valid age required.");
+          }
+
+          let gender = "";
+          while (!gender) {
+            gender = prompt("Gender (Male/Female/Other):");
+            if (!gender) alert("Gender is required.");
+          }
+
+          let phone = "";
+          while (true) {
+            phone = prompt("Mobile number (10 digits):");
+            if (!phone) {
+              alert("Mobile number is required.");
+              continue;
+            }
+            if (!isValidPhone(phone)) {
+              alert("Mobile number must contain exactly 10 digits (0–9 only).");
+              continue;
+            }
+            break;
+          }
+
+          let email = prompt("Email (optional):") || "";
+
+          // 2) Date with validation
+          let date = "";
+          while (true) {
+            date = prompt("Date (YYYY-MM-DD):");
+            if (!date) {
+              alert("Date is required.");
+              continue;
+            }
+            if (!isValidDateYYYYMMDD(date)) {
+              alert("Please enter a valid date in format YYYY-MM-DD (e.g., 2025-12-02).");
+              continue;
+            }
+            break;
+          }
+
+          // 3) Load doctors so patient can choose
+          const docRes = await fetch("/api/doctors");
+          const docData = await docRes.json();
+          const docs = docData.doctors || [];
+
+          if (!docs.length) {
+            addMessage("No doctors available. Ask a doctor/admin to register.", "bot");
+            return;
+          }
+
+          let list = "Choose a doctor by ID:\n\n";
+          docs.forEach(d => {
+            list += `${d.id} - ${d.name} (${d.specialty}, ${d.hospital || "No hospital"})\n`;
+          });
+
+          let chosenDoctorId = null;
+          while (true) {
+            const inp = prompt(list);
+            if (!inp) {
+              addMessage("Booking cancelled.", "bot");
+              return;
+            }
+            const id = parseInt(inp, 10);
+            if (!isNaN(id) && docs.some(d => d.id === id)) {
+              chosenDoctorId = id;
+              break;
+            }
+            alert("Please enter a valid doctor ID from the list.");
+          }
+
+          // 4) Get available slots for that doctor on that date
+          const slotRes = await fetch(
+            `/api/doctor_slots?doctor_id=${chosenDoctorId}&date=${encodeURIComponent(date)}`
+          );
+          const slotData = await slotRes.json();
+          if (!slotData.ok) {
+            addMessage(slotData.message || "Unable to get time slots.", "bot");
+            return;
+          }
+
+          const available = slotData.available_slots || [];
+          if (!available.length) {
+            addMessage("No free slots for this doctor on that date.", "bot");
+            return;
+          }
+
+          // 5) System picks earliest available time for that doctor
+          available.sort(); // "09:00" < "10:00" etc.
+          const chosenTime = available[0];
+
+          // 6) Book appointment
+          const res = await fetch("/api/book", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              patient_name: name,
+              patient_age: age,
+              patient_gender: gender,
+              patient_email: email,
+              patient_phone: phone,
+              doctor_id: chosenDoctorId,
+              date: date,
+              time: chosenTime,
+              reason: "Not specified"
+            })
+          });
+
+          const out = await res.json();
+          if (!out.ok) {
+            addMessage(out.message || "Could not book appointment.", "bot");
+            return;
+          }
+
+          addMessage(out.message, "bot");
+          loadAppointments();
+          return;
+
+        } catch (e) {
+          console.error(e);
+          addMessage("Error booking appointment.", "bot");
+        }
+        return;
+      }
+
+      // View appointments
+      if (text === "view") {
+        const res = await fetch("/api/appointments");
+        const data = await res.json();
+        if (!data.appointments.length) {
+          addMessage("No appointments found.", "bot");
+          return;
+        }
+        let msg = "Your appointments:\n\n";
+        data.appointments.forEach(a => {
+          msg += `ID: ${a.id}\n` +
+                 `Patient: ${a.patient_name} (${a.patient_age}, ${a.patient_gender})\n` +
+                 `Doctor: ${a.doctor_name} (${a.doctor_specialty})\n` +
+                 `Date: ${a.date}  Time: ${a.time}\n` +
+                 `Reason: ${a.reason}\n` +
+                 "-------------------\n";
+        });
+        addMessage(msg.trim(), "bot");
+        return;
+      }
+
+      // Cancel appointments
+      if (text === "cancel") {
+        cancelAppointmentFlow();
+        return;
+      }
+
+      addMessage("Commands: book / view / cancel / symptom", "bot");
+    }
+
+    async function loadAppointments() {
+      const res = await fetch("/api/appointments");
+      const data = await res.json();
+      const body = document.querySelector("#appointmentsTable tbody");
+      body.innerHTML = "";
+      (data.appointments || []).forEach(a => {
+        body.innerHTML += `
+          <tr>
+            <td>${a.id}</td><td>${a.patient_name}</td><td>${a.patient_age}</td>
+            <td>${a.patient_gender}</td><td>${a.patient_email}</td><td>${a.patient_phone}</td>
+            <td>${a.doctor_name}</td><td>${a.doctor_specialty}</td>
+            <td>${a.date}</td><td>${a.time}</td><td>${a.reason}</td>
+          </tr>`;
+      });
+    }
+
+    async function loadDoctors() {
+      const res = await fetch("/api/doctors");
+      const data = await res.json();
+      const body = document.querySelector("#doctorsTable tbody");
+      body.innerHTML = "";
+      (data.doctors || []).forEach(d => {
+        body.innerHTML += `
+          <tr>
+            <td>${d.id}</td><td>${d.name}</td><td>${d.specialty}</td>
+            <td>${d.hospital}</td><td>${d.email}</td><td>${d.phone}</td>
+          </tr>`;
+      });
+    }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      const user = document.body.dataset.username || "patient";
+      addMessage(
+        "Hello, " + user + "!\n" +
+        "I can help you:\n" +
+        "• book – you choose doctor, system chooses earliest time\n" +
+        "• view – view your appointments\n" +
+        "• cancel – cancel by ID\n" +
+        "• symptom – get general symptom education",
+        "bot"
+      );
+    });
+  </script>
+</body>
+</html>
