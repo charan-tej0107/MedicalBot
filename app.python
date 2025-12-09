@@ -1,0 +1,865 @@
+import sqlite3
+import random
+from flask import (
+    Flask,
+    request,
+    jsonify,
+    render_template,
+    redirect,
+    url_for,
+    session,
+)
+from werkzeug.security import generate_password_hash, check_password_hash
+from datetime import datetime, timedelta
+from functools import wraps
+import re
+
+app = Flask(__name__)
+app.secret_key = "HJDH8723hjhFIU89!#98dfh2UFH2uhf9823y9hf2f"    # CHANGE this in production
+
+
+# ---------------------- DB HELPERS ---------------------- #
+
+def get_db():
+    conn = sqlite3.connect("database.db")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    conn = get_db()
+    cur = conn.cursor()
+
+    # Users (patients + doctors + admin)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('patient','doctor','admin')),
+            email TEXT,
+            age INTEGER,
+            gender TEXT,
+            phone TEXT
+        )
+        """
+    )
+
+    # Doctors (with hospital + night shift flag - now always set automatically)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS doctors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            specialty TEXT NOT NULL,
+            hospital TEXT,
+            email TEXT,
+            phone TEXT,
+            has_night_shift INTEGER DEFAULT 0
+        )
+        """
+    )
+
+    # Doctor schedule: allow many doctors at same date+time, but
+    # prevent duplicate (date,time,doctor_id) rows
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS doctor_schedule (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            time TEXT NOT NULL,
+            doctor_id INTEGER NOT NULL,
+            UNIQUE(date, time, doctor_id),
+            FOREIGN KEY(doctor_id) REFERENCES doctors(id)
+        )
+        """
+    )
+
+    # Appointments
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS appointments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            patient_name TEXT NOT NULL,
+            patient_age INTEGER,
+            patient_gender TEXT,
+            patient_email TEXT,
+            patient_phone TEXT,
+            doctor_id INTEGER NOT NULL,
+            date TEXT,
+            time TEXT,
+            reason TEXT,
+            created_by_user_id INTEGER,
+            FOREIGN KEY(doctor_id) REFERENCES doctors(id),
+            FOREIGN KEY(created_by_user_id) REFERENCES users(id)
+        )
+        """
+    )
+
+    # Seed demo users only (patients/doctor/admin). Do not seed demo doctors to avoid confusion.
+    cur.execute("SELECT COUNT(*) AS c FROM users")
+    count_users = cur.fetchone()["c"]
+    if count_users == 0:
+        users_seed = [
+            ("patient", generate_password_hash("patient123"), "patient",
+             "patient@example.com", 22, "Male", "9000000000"),
+            ("drsmith", generate_password_hash("doctor123"), "doctor",
+             "drsmith@example.com", None, None, None),
+            ("admin", generate_password_hash("admin123"), "admin",
+             "admin@example.com", None, None, None),
+        ]
+        cur.executemany(
+            """
+            INSERT INTO users (username, password, role, email, age, gender, phone)
+            VALUES (?,?,?,?,?,?,?)
+            """,
+            users_seed,
+        )
+        print("Seeded demo users: patient/doctor/admin.")
+
+    conn.commit()
+    conn.close()
+
+
+# ---------------------- SYMPTOM INFO ---------------------- #
+
+EMERGENCY_KEYWORDS = [
+    "chest pain", "severe chest pain", "shortness of breath",
+    "difficulty breathing", "cant breathe", "can't breathe",
+    "unconscious", "fainting", "severe bleeding", "suicidal", "suicide",
+]
+
+SYMPTOM_EDU = {
+    "fever": (
+        "Fever usually means your body is fighting an infection.\n"
+        "- Rest and drink fluids.\n"
+        "⚠️ High or persistent fever → see a doctor.\n"
+        "This is general information, not a diagnosis."
+    ),
+    "cough": (
+        "Cough has many causes (cold, flu, allergy, etc.).\n"
+        "- Mild, short cough is often viral.\n"
+        "⚠️ Long-lasting or severe cough, blood, or breath trouble → doctor urgently.\n"
+        "This is general information, not a diagnosis."
+    ),
+    "headache": (
+        "Headache is common and can be from stress, sleep, dehydration.\n"
+        "⚠️ Sudden very severe headache or with confusion/weakness → emergency.\n"
+        "This is general information, not a diagnosis."
+    ),
+    "stomach pain": (
+        "Stomach pain can be indigestion, infection, etc.\n"
+        "⚠️ Sudden severe pain, right-lower pain, or pain with high fever → doctor quickly.\n"
+        "This is general information, not a diagnosis."
+    ),
+    "sore throat": (
+        "Sore throat is often viral.\n"
+        "Warm fluids and rest may help.\n"
+        "⚠️ Very painful swallowing or high fever → see doctor.\n"
+        "This is general information, not a diagnosis."
+    ),
+    "diarrhea": (
+        "Diarrhea can be infection or food related.\n"
+        "Main risk is dehydration → drink fluids.\n"
+        "⚠️ Blood, very frequent diarrhea, high fever, or weakness → doctor urgently.\n"
+        "This is general information, not a diagnosis."
+    ),
+    "period": (
+        "Period (menstrual) symptoms like mild lower-abdominal cramps, low back pain, "
+        "bloating, mood changes and mild fatigue are common.\n"
+        "- Rest, a warm pad on the lower abdomen, light exercise and drinking fluids "
+        "may give relief.\n"
+        "- Pain medicine should only be used as advised by a doctor or pharmacist.\n"
+        "⚠️ Get urgent help if you have very heavy bleeding, large clots, very severe or "
+        "sudden pain, dizziness, fainting, or if you might be pregnant.\n"
+        "This is general educational information, not a diagnosis."
+    ),
+}
+
+# Time slots: day and night
+DAY_SLOTS = [
+    "09:00",
+    "10:00",
+    "11:00",
+    "14:00",
+    "15:00",
+    "16:00",
+]
+
+NIGHT_SLOTS = [
+    "19:00",
+    "20:00",
+    "21:00",
+]
+
+ALL_SLOTS = DAY_SLOTS + NIGHT_SLOTS  # used for schedule
+
+
+# ---------------------- SCHEDULE HELPER (WEEKLY + WEEKEND GUARANTEE) ---------------------- #
+
+def regenerate_full_schedule():
+    """
+    Weekly repeating schedule:
+    - Each doctor gets 1 random weekly off-day (not stored permanently).
+    - Doctor works ALL time slots on all other days.
+    - Weekly pattern repeats for next 60 days.
+    """
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    # Load doctors
+    cur.execute("SELECT * FROM doctors ORDER BY id ASC")
+    docs = cur.fetchall()
+
+    # Clear old schedule
+    cur.execute("DELETE FROM doctor_schedule")
+
+    if not docs:
+        conn.commit()
+        conn.close()
+        print("No doctors found. Duty schedule cleared.")
+        return False, "No doctors available."
+
+    # Days of week
+    DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+    # Assign each doctor ONE random weekly off-day (NOT SAVED IN DB)
+    weekly_off = {}
+    for d in docs:
+        random_day = random.choice(DAY_NAMES)
+        weekly_off[d["id"]] = random_day
+
+    today = datetime.now().date()
+
+    # Build schedule for next 60 days
+    for i in range(60):
+        date_obj = today + timedelta(days=i)
+        date_str = date_obj.isoformat()
+        day_name = date_obj.strftime("%A")
+
+        for d in docs:
+            doc_id = d["id"]
+
+            # Skip the random off-day
+            if day_name == weekly_off[doc_id]:
+                continue
+
+            # Assign ALL time slots on working day
+            for t in ALL_SLOTS:
+                cur.execute(
+                    "INSERT INTO doctor_schedule(date, time, doctor_id) VALUES (?,?,?)",
+                    (date_str, t, doc_id),
+                )
+
+    conn.commit()
+    conn.close()
+    print("Weekly duty schedule regenerated for next 60 days.")
+    return True, "Weekly schedule regenerated."
+
+
+# ---------------------- AUTH HELPERS ---------------------- #
+
+def login_required(view_func):
+    @wraps(view_func)
+    def wrapper(*args, **kwargs):
+        if "user_id" not in session:
+            return redirect(url_for("login"))
+        return view_func(*args, **kwargs)
+    return wrapper
+
+
+def get_current_user():
+    """Return user row or None. If session has invalid id, clear it."""
+    user_id = session.get("user_id")
+    if not user_id:
+        return None
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+    row = cur.fetchone()
+    conn.close()
+    if row is None:
+        # session refers to deleted / non-existing user
+        session.pop("user_id", None)
+    return row
+
+
+def is_possible_emergency(text: str) -> bool:
+    t = text.lower()
+    return any(k in t for k in EMERGENCY_KEYWORDS)
+
+
+def get_symptom_education(symptom_text: str) -> str:
+    t = symptom_text.lower()
+    for key, explanation in SYMPTOM_EDU.items():
+        if key in t:
+            return explanation
+    return (
+        "I can give only general, educational information.\n"
+        "For the symptom you described there can be many causes.\n"
+        "Please consult a qualified doctor for proper evaluation.\n"
+        "This is not medical advice or diagnosis."
+    )
+
+
+# ---------------------- ROUTES: AUTH ---------------------- #
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        username = (request.form.get("username") or "").strip()
+        password = (request.form.get("password") or "").strip()
+
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM users WHERE username = ?", (username,))
+        user = cur.fetchone()
+        conn.close()
+
+        if user and check_password_hash(user["password"], password):
+            session["user_id"] = user["id"]
+            return redirect(url_for("dashboard"))
+        return render_template("login.html", error="Invalid username or password.")
+
+    return render_template("login.html", error=None)
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "POST":
+        username = (request.form.get("username") or "").strip()
+        password = (request.form.get("password") or "").strip()
+        email = (request.form.get("email") or "").strip()
+        phone = (request.form.get("phone") or "").strip()
+        age = request.form.get("age")
+        gender = (request.form.get("gender") or "").strip()
+        role = (request.form.get("role") or "patient").strip()  # patient / doctor
+
+        doctor_name = (request.form.get("doctor_name") or "").strip()
+        specialty = (request.form.get("specialty") or "").strip()
+        hospital = (request.form.get("hospital") or "").strip()
+        # night_shift_flag is now automatic
+        night_shift_flag = 1
+
+        if not username or not password:
+            return render_template("register.html",
+                                   error="Username and password are required.")
+
+        age_int = None
+        if age:
+            try:
+                age_int = int(age)
+            except ValueError:
+                return render_template("register.html",
+                                       error="Age must be a number.")
+
+        hashed = generate_password_hash(password)
+
+        conn = get_db()
+        cur = conn.cursor()
+        try:
+            # create user
+            cur.execute(
+                """
+                INSERT INTO users (username, password, role, email, age, gender, phone)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (username, hashed, role, email, age_int, gender, phone),
+            )
+            conn.commit()
+
+            # if doctor, also create doctor entry
+            if role == "doctor":
+                if not doctor_name:
+                    doctor_name = f"Dr. {username}"
+                if not specialty:
+                    specialty = "General"
+                cur.execute(
+                    """
+                    INSERT INTO doctors (name, specialty, hospital, email, phone, has_night_shift)
+                    VALUES (?,?,?,?,?,?)
+                    """,
+                    (doctor_name, specialty, hospital, email, phone, night_shift_flag),
+                )
+                conn.commit()
+                # regenerate duty schedule when a new doctor is added
+                regenerate_full_schedule()
+
+        except sqlite3.IntegrityError:
+            conn.close()
+            return render_template(
+                "register.html",
+                error="Username already exists. Please choose another.",
+            )
+
+        conn.close()
+        return redirect(url_for("login"))
+
+    return render_template("register.html", error=None)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+# ---------------------- DASHBOARD ROUTE ---------------------- #
+
+@app.route("/")
+@login_required
+def dashboard():
+    user = get_current_user()
+    if not user:
+        return redirect(url_for("login"))
+    if user["role"] == "patient":
+        return render_template("dashboard.html",
+                               username=user["username"],
+                               role=user["role"])
+    # doctor or admin
+    return render_template("dashboard_doctor.html",
+                           username=user["username"],
+                           role=user["role"])
+
+
+# ---------------------- DOCTORS API ---------------------- #
+
+@app.route("/api/doctors", methods=["GET"])
+@login_required
+def api_list_doctors():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM doctors ORDER BY id ASC")
+    docs = []
+    for row in cur.fetchall():
+        docs.append({
+            "id": row["id"],
+            "name": row["name"] or "",
+            "specialty": row["specialty"] or "",
+            "hospital": row["hospital"] or "",
+            "email": row["email"] or "",
+            "phone": row["phone"] or "",
+            "has_night_shift": row["has_night_shift"] or 0,
+        })
+    conn.close()
+    return jsonify({"ok": True, "doctors": docs})
+
+
+@app.route("/api/doctors", methods=["POST"])
+@login_required
+def api_add_doctor():
+    user = get_current_user()
+    if not user or user["role"] != "admin":
+        return jsonify({"ok": False, "message": "Only admin can add doctors."}), 403
+
+    data = request.get_json(force=True)
+    name = (data.get("name") or "").strip()
+    specialty = (data.get("specialty") or "").strip()
+    hospital = (data.get("hospital") or "").strip()
+    email = (data.get("email") or "").strip()
+    phone = (data.get("phone") or "").strip()
+    # night shifts automatic now
+    night_shift = 1
+
+    if not name or not specialty:
+        return jsonify({"ok": False, "message": "Name and specialty are required."}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO doctors (name, specialty, hospital, email, phone, has_night_shift)
+        VALUES (?,?,?,?,?,?)
+        """,
+        (name, specialty, hospital, email, phone, night_shift),
+    )
+    conn.commit()
+    conn.close()
+
+    # regenerate schedule whenever a new doctor is added
+    regenerate_full_schedule()
+
+    return jsonify({"ok": True, "message": "Doctor added successfully. Duty schedule regenerated."})
+
+
+@app.route("/api/doctors/<int:doc_id>", methods=["DELETE"])
+@login_required
+def api_delete_doctor(doc_id):
+    user = get_current_user()
+    if not user or user["role"] != "admin":
+        return jsonify({"ok": False, "message": "Only admin can delete doctors."}), 403
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM doctors WHERE id = ?", (doc_id,))
+    conn.commit()
+    conn.close()
+
+    # also regenerate after deletion so schedule stays consistent
+    regenerate_full_schedule()
+
+    return jsonify({"ok": True, "message": "Doctor deleted (if existed). Duty schedule regenerated."})
+
+
+# ---------------------- DOCTOR SCHEDULE API ---------------------- #
+
+@app.route("/api/auto_schedule", methods=["POST"])
+@login_required
+def api_auto_schedule():
+    """
+    Regenerate the full fixed weekly duty schedule (for next 60 days).
+    """
+    user = get_current_user()
+    if not user or user["role"] not in ("doctor", "admin"):
+        return jsonify({"ok": False, "message": "Only doctor/admin can generate schedule."}), 403
+
+    ok, msg = regenerate_full_schedule()
+    return jsonify({"ok": ok, "message": msg})
+
+
+@app.route("/api/schedule", methods=["GET"])
+@login_required
+def api_schedule():
+    date_str = (request.args.get("date") or "").strip()
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    if date_str:
+        cur.execute("""
+            SELECT s.date, s.time, d.id AS doctor_id, d.name, d.specialty, d.hospital
+            FROM doctor_schedule s
+            JOIN doctors d ON s.doctor_id = d.id
+            WHERE s.date = ?
+            ORDER BY s.time
+        """, (date_str,))
+    else:
+        cur.execute("""
+            SELECT s.date, s.time, d.id AS doctor_id, d.name, d.specialty, d.hospital
+            FROM doctor_schedule s
+            JOIN doctors d ON s.doctor_id = d.id
+            ORDER BY s.date, s.time
+        """)
+
+    rows = cur.fetchall()
+    conn.close()
+
+    out = []
+    for r in rows:
+        day_name = datetime.strptime(r["date"], "%Y-%m-%d").strftime("%A")
+        out.append({
+            "date": r["date"],
+            "day": day_name,
+            "time": r["time"],
+            "doctor_id": r["doctor_id"],
+            "doctor_name": r["name"],
+            "specialty": r["specialty"],
+            "hospital": r["hospital"]
+        })
+
+    return jsonify({"ok": True, "schedule": out})
+
+
+# ---------------------- SLOTS & APPOINTMENTS API ---------------------- #
+
+@app.route("/api/doctor_slots", methods=["GET"])
+@login_required
+def api_doctor_slots():
+    """
+    Returns which time slots are available for a given doctor and date.
+    Query params: doctor_id, date (YYYY-MM-DD)
+    """
+    doctor_id = request.args.get("doctor_id", type=int)
+    date = (request.args.get("date") or "").strip()
+
+    if not doctor_id or not date:
+        return jsonify({"ok": False, "message": "doctor_id and date are required."}), 400
+
+    # validate date format
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        return jsonify({"ok": False, "message": "Date must be valid and in format YYYY-MM-DD."}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    # Get doctor (has_night_shift now always 1, set when doctor added)
+    cur.execute("SELECT * FROM doctors WHERE id = ?", (doctor_id,))
+    doc = cur.fetchone()
+    if not doc:
+        conn.close()
+        return jsonify({"ok": False, "message": "Doctor not found."}), 400
+
+    has_night = (doc["has_night_shift"] or 0) == 1
+    all_slots = DAY_SLOTS + (NIGHT_SLOTS if has_night else [])
+
+    # Find taken slots for that doctor on that date
+    cur.execute(
+        "SELECT time FROM appointments WHERE doctor_id = ? AND date = ?",
+        (doctor_id, date),
+    )
+    taken = {row["time"] for row in cur.fetchall()}
+    conn.close()
+
+    available = [t for t in all_slots if t not in taken]
+
+    return jsonify({
+        "ok": True,
+        "time_slots": all_slots,
+        "taken_slots": list(taken),
+        "available_slots": available,
+    })
+
+
+@app.route("/api/book", methods=["POST"])
+@login_required
+def api_book_appointment():
+    user = get_current_user()
+    if not user:
+        return jsonify({"ok": False, "message": "Not logged in."}), 401
+
+    data = request.get_json(force=True)
+
+    patient_name = (data.get("patient_name") or "").strip()
+    patient_age = data.get("patient_age")
+    patient_gender = (data.get("patient_gender") or "").strip()
+    patient_email = (data.get("patient_email") or "").strip()
+    patient_phone = (data.get("patient_phone") or "").strip()
+    doctor_id = data.get("doctor_id")
+    date = (data.get("date") or "").strip()
+    time_ = (data.get("time") or "").strip()
+    reason = (data.get("reason") or "").strip() or "Not specified"
+
+    # Basic checks
+    if not patient_name or not doctor_id or not date or not time_:
+        return jsonify(
+            {"ok": False, "message": "Patient name, doctor, date and time are required."}
+        ), 400
+
+    # Phone must be exactly 10 digits
+    if not re.fullmatch(r"\d{10}", patient_phone or ""):
+        return jsonify(
+            {"ok": False, "message": "Mobile number must contain exactly 10 digits."}
+        ), 400
+
+    # Date must be a valid calendar date, format YYYY-MM-DD
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        return jsonify(
+            {"ok": False, "message": "Date must be valid and in format YYYY-MM-DD."}
+        ), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    # Get doctor
+    cur.execute("SELECT * FROM doctors WHERE id = ?", (doctor_id,))
+    doc = cur.fetchone()
+    if not doc:
+        conn.close()
+        return jsonify({"ok": False, "message": "Selected doctor does not exist."}), 400
+
+    has_night = (doc["has_night_shift"] or 0) == 1
+    allowed_slots = DAY_SLOTS + (NIGHT_SLOTS if has_night else [])
+
+    # Time must be one of the allowed slots for THIS doctor
+    if time_ not in allowed_slots:
+        conn.close()
+        return jsonify(
+            {"ok": False, "message": "Invalid time slot for this doctor."}
+        ), 400
+
+    # Check if that slot is already taken
+    cur.execute(
+        "SELECT COUNT(*) AS c FROM appointments WHERE doctor_id = ? AND date = ? AND time = ?",
+        (doctor_id, date, time_),
+    )
+    if cur.fetchone()["c"] > 0:
+        conn.close()
+        return jsonify(
+            {
+                "ok": False,
+                "message": "This doctor already has an appointment at that time. "
+                           "Please choose another slot."
+            }
+        ), 400
+
+    # Insert appointment
+    cur.execute(
+        """
+        INSERT INTO appointments
+        (patient_name, patient_age, patient_gender, patient_email, patient_phone,
+         doctor_id, date, time, reason, created_by_user_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            patient_name, patient_age, patient_gender, patient_email, patient_phone,
+            doctor_id, date, time_, reason, user["id"],
+        ),
+    )
+    conn.commit()
+    appt_id = cur.lastrowid
+    conn.close()
+
+    reply = (
+        "✅ Appointment booked!\n"
+        f"ID: {appt_id}\n"
+        f"Patient: {patient_name} ({patient_age}, {patient_gender})\n"
+        f"Email: {patient_email or 'N/A'}\n"
+        f"Phone: {patient_phone or 'N/A'}\n"
+        f"Doctor: {doc['name']} ({doc['specialty']})\n"
+        f"Hospital: {doc['hospital'] or 'N/A'}\n"
+        f"Date & Time: {date} at {time_}\n"
+        f"Reason: {reason}"
+    )
+
+    return jsonify({"ok": True, "message": reply})
+
+
+@app.route("/api/appointments", methods=["GET"])
+@login_required
+def api_list_appointments():
+    user = get_current_user()
+    if not user:
+        return jsonify({"ok": False, "message": "Not logged in."}), 401
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    if user["role"] == "patient":
+        cur.execute(
+            """
+            SELECT a.*, d.name AS doctor_name, d.specialty AS doctor_specialty
+            FROM appointments a
+            JOIN doctors d ON a.doctor_id = d.id
+            WHERE a.created_by_user_id = ?
+            ORDER BY a.date, a.time
+            """,
+            (user["id"],),
+        )
+    elif user["role"] == "doctor":
+        # appointments for this doctor (matched by email)
+        cur.execute(
+            """
+            SELECT a.*, d.name AS doctor_name, d.specialty AS doctor_specialty
+            FROM appointments a
+            JOIN doctors d ON a.doctor_id = d.id
+            WHERE d.email = ?
+            ORDER BY a.date, a.time
+            """,
+            (user["email"],),
+        )
+    else:  # admin
+        cur.execute(
+            """
+            SELECT a.*, d.name AS doctor_name, d.specialty AS doctor_specialty
+            FROM appointments a
+            JOIN doctors d ON a.doctor_id = d.id
+            ORDER BY a.date, a.time
+            """
+        )
+
+    rows = cur.fetchall()
+    conn.close()
+
+    appts = []
+    for r in rows:
+        appts.append(
+            {
+                "id": r["id"],
+                "patient_name": r["patient_name"] or "",
+                "patient_age": r["patient_age"] or "",
+                "patient_gender": r["patient_gender"] or "",
+                "patient_email": r["patient_email"] or "",
+                "patient_phone": r["patient_phone"] or "",
+                "date": r["date"] or "",
+                "time": r["time"] or "",
+                "reason": r["reason"] or "",
+                "doctor_name": r["doctor_name"] or "",
+                "doctor_specialty": r["doctor_specialty"] or "",
+            }
+        )
+
+    return jsonify({"ok": True, "appointments": appts})
+
+@app.route("/api/appointments/<int:appt_id>", methods=["DELETE"])
+@login_required
+def api_cancel_appointment(appt_id):
+    user = get_current_user()
+    if not user:
+        return jsonify({"ok": False, "message": "Not logged in."}), 401
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    # Patients can cancel only their own appointments
+    if user["role"] == "patient":
+        cur.execute(
+            "DELETE FROM appointments WHERE id = ? AND created_by_user_id = ?",
+            (appt_id, user["id"]),
+        )
+
+    # Doctors can cancel only appointments that belong to them
+    elif user["role"] == "doctor":
+        cur.execute(
+            """
+            DELETE FROM appointments
+            WHERE id = ?
+              AND doctor_id IN (SELECT id FROM doctors WHERE email = ?)
+            """,
+            (appt_id, user["email"]),
+        )
+
+    # Admin can cancel any appointment
+    else:  # admin
+        cur.execute("DELETE FROM appointments WHERE id = ?", (appt_id,))
+
+    conn.commit()
+    changed = cur.rowcount
+    conn.close()
+
+    if changed == 0:
+        # nothing deleted: either it doesn't exist or user had no permission
+        return jsonify(
+            {"ok": False, "message": "No appointment found or permission denied."}
+        ), 404
+
+    return jsonify({"ok": True, "message": f"Appointment {appt_id} cancelled."})
+
+
+
+# ---------------------- SYMPTOM EDUCATION API ---------------------- #
+
+@app.route("/api/symptom_education", methods=["POST"])
+@login_required
+def api_symptom_education():
+    data = request.get_json(force=True)
+    symptom_text = (data.get("symptom") or "").strip()
+
+    if not symptom_text:
+        return jsonify({"ok": False,
+                        "message": "Please describe your symptom briefly."}), 400
+
+    if is_possible_emergency(symptom_text):
+        reply = (
+            "⚠️ The symptoms you described could be serious.\n"
+            "Please contact emergency medical services or go to a hospital immediately.\n"
+            "I cannot assess or handle emergencies."
+        )
+        return jsonify({"ok": True, "message": reply})
+
+    info = get_symptom_education(symptom_text)
+    return jsonify({"ok": True, "message": info})
+
+
+# ---------------------- MAIN ---------------------- #
+
+if __name__ == "__main__":
+    init_db()
+    # Build schedule initially on server start
+    regenerate_full_schedule()
+    app.run(debug=True)
